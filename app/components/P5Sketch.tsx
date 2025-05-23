@@ -15,7 +15,6 @@ interface SortOptions {
   sortMode: 'brightness' | 'hue' | 'saturation' | 'color';
   threshold: number;
   sortDirection: 'ascending' | 'descending';
-  sortInterval: number;  // New parameter for interval between sorted sections
   sortLength: number;    // New parameter for length of sorted sections
   noiseThreshold: number; // New parameter for noise reduction
   sortIntensity: number; // New parameter for sort intensity
@@ -33,7 +32,6 @@ const P5Sketch = () => {
   const [sortMode, setSortMode] = useState<'brightness' | 'hue' | 'saturation' | 'color'>('brightness');
   const [threshold, setThreshold] = useState<number>(127); // 0-255
   const [sortDirection, setSortDirection] = useState<'ascending' | 'descending'>('ascending');
-  const [sortInterval, setSortInterval] = useState<number>(10); // New state for interval
   const [sortLength, setSortLength] = useState<number>(50);    // New state for length
   const [noiseThreshold, setNoiseThreshold] = useState<number>(10); // New state for noise
   const [sortIntensity, setSortIntensity] = useState<number>(100);  // New state for intensity
@@ -59,7 +57,6 @@ const P5Sketch = () => {
             sortMode,
             threshold,
             sortDirection,
-            sortInterval,
             sortLength,
             noiseThreshold,
             sortIntensity,
@@ -181,7 +178,10 @@ const P5Sketch = () => {
           if (!originalImg) return;
           
           // Get sort options from parameters
-          const { sortMode, threshold, sortDirection, sortInterval, sortLength, noiseThreshold, sortIntensity, sliceWidth } = options;
+          const { 
+            sortMode, threshold, sortDirection, sortLength, 
+            noiseThreshold, sortIntensity, sliceWidth
+          } = options;
           
           // Create a copy of the original image for sorting
           sortedImg = p.createImage(originalImg.width, originalImg.height);
@@ -633,25 +633,6 @@ const P5Sketch = () => {
                 />
                 <span>Descending</span>
               </label>
-            </div>
-          </div>
-
-          {/* Sort Interval */}
-          <div className="flex flex-col space-y-3">
-            <label className="text-base font-medium text-gray-800">Sort Interval:</label>
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm text-gray-600">
-                <span>tight</span>
-                <span>sparse</span>
-              </div>
-              <input
-                type="range"
-                min="1"
-                max="50"
-                value={sortInterval}
-                onChange={(e) => setSortInterval(parseInt(e.target.value))}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-              />
             </div>
           </div>
 
