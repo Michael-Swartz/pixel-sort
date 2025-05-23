@@ -190,7 +190,7 @@ const P5Sketch = () => {
             // Process rows in the current chunk
             for (let y = currentRow; y < endRow; y++) {
               // Extract the row of pixels
-              const row: any[] = [];
+              const row: Array<[number, number, number, number, number, number?]> = [];
               for (let x = 0; x < sortedImg!.width; x++) {
                 const i = (y * sortedImg!.width + x) * 4;
                 // Store pixel as [r,g,b,a,index] to remember original position
@@ -251,14 +251,14 @@ const P5Sketch = () => {
               
               // Apply threshold filter - only sort pixels above the threshold
               const thresholdValue = threshold;
-              let pixelsAboveThreshold: any[] = [];
-              let pixelsBelowThreshold: any[] = [];
+              const pixelsAboveThreshold: Array<[number, number, number, number, number, number?]> = [];
+              const pixelsBelowThreshold: Array<[number, number, number, number, number, number?]> = [];
               
               row.forEach(pixel => {
                 const value = pixel[5]; // The sort value we just added
-                if (sortMode === 'brightness' && value >= thresholdValue) {
+                if (sortMode === 'brightness' && value !== undefined && value >= thresholdValue) {
                   pixelsAboveThreshold.push(pixel);
-                } else if ((sortMode === 'hue' || sortMode === 'saturation') && value >= thresholdValue / 2.55) {
+                } else if ((sortMode === 'hue' || sortMode === 'saturation') && value !== undefined && value >= thresholdValue / 2.55) {
                   // Normalize threshold from 0-255 to 0-100 for saturation, 0-360 for hue
                   pixelsAboveThreshold.push(pixel);
                 } else {
@@ -268,8 +268,8 @@ const P5Sketch = () => {
               
               // Sort pixels above threshold
               pixelsAboveThreshold.sort((a, b) => {
-                const valueA = a[5];
-                const valueB = b[5];
+                const valueA = a[5] ?? 0; // Default to 0 if undefined
+                const valueB = b[5] ?? 0; // Default to 0 if undefined
                 return sortDirection === 'ascending' ? valueA - valueB : valueB - valueA;
               });
               
@@ -383,7 +383,7 @@ const P5Sketch = () => {
         p5Instance.current.remove();
       }
     };
-  }, []); // Empty dependency array to run only once on mount
+  }, [imageFile]); // Added imageFile as a dependency
   
   // Effect to handle image updates
   useEffect(() => {
