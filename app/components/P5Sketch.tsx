@@ -12,9 +12,14 @@ interface ExtendedP5 extends p5 {
 
 // Define a type for our sort options
 interface SortOptions {
-  sortMode: 'brightness' | 'hue' | 'saturation';
+  sortMode: 'brightness' | 'hue' | 'saturation' | 'color';
   threshold: number;
   sortDirection: 'ascending' | 'descending';
+  sortInterval: number;  // New parameter for interval between sorted sections
+  sortLength: number;    // New parameter for length of sorted sections
+  noiseThreshold: number; // New parameter for noise reduction
+  sortIntensity: number; // New parameter for sort intensity
+  sliceWidth: number;    // New parameter for width of unsorted vertical slices
 }
 
 const P5Sketch = () => {
@@ -25,9 +30,14 @@ const P5Sketch = () => {
   const [hasSortedImage, setHasSortedImage] = useState(false);
   
   // Sort configuration state
-  const [sortMode, setSortMode] = useState<'brightness' | 'hue' | 'saturation'>('brightness');
+  const [sortMode, setSortMode] = useState<'brightness' | 'hue' | 'saturation' | 'color'>('brightness');
   const [threshold, setThreshold] = useState<number>(127); // 0-255
   const [sortDirection, setSortDirection] = useState<'ascending' | 'descending'>('ascending');
+  const [sortInterval, setSortInterval] = useState<number>(10); // New state for interval
+  const [sortLength, setSortLength] = useState<number>(50);    // New state for length
+  const [noiseThreshold, setNoiseThreshold] = useState<number>(10); // New state for noise
+  const [sortIntensity, setSortIntensity] = useState<number>(100);  // New state for intensity
+  const [sliceWidth, setSliceWidth] = useState<number>(0);     // New state for slice width
   
   // Handle file selection
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -48,7 +58,12 @@ const P5Sketch = () => {
           p5Instance.current.startPixelSort({
             sortMode,
             threshold,
-            sortDirection
+            sortDirection,
+            sortInterval,
+            sortLength,
+            noiseThreshold,
+            sortIntensity,
+            sliceWidth
           });
         }
       }, 50); // Small delay to ensure UI updates first
@@ -166,7 +181,7 @@ const P5Sketch = () => {
           if (!originalImg) return;
           
           // Get sort options from parameters
-          const { sortMode, threshold, sortDirection } = options;
+          const { sortMode, threshold, sortDirection, sortInterval, sortLength, noiseThreshold, sortIntensity, sliceWidth } = options;
           
           // Create a copy of the original image for sorting
           sortedImg = p.createImage(originalImg.width, originalImg.height);
@@ -246,8 +261,54 @@ const P5Sketch = () => {
                     saturation = l > 0.5 ? d / (2 - max - min) : d / (max + min);
                   }
                   pixel.push(saturation * 100);
+                } else if (sortMode === 'color') {
+                  // Create a single value that represents the color
+                  // This combines RGB values in a way that preserves color relationships
+                  // Using a weighted sum that gives more importance to the dominant color
+                  const max = Math.max(r, g, b);
+                  const min = Math.min(r, g, b);
+                  const delta = max - min;
+                  
+                  // Calculate color value based on dominant color and intensity
+                  let colorValue = 0;
+                  if (delta === 0) {
+                    // Grayscale
+                    colorValue = r;
+                  } else {
+                    // Color
+                    if (max === r) {
+                      colorValue = 256 * 0 + g;
+                    } else if (max === g) {
+                      colorValue = 256 * 1 + b;
+                    } else {
+                      colorValue = 256 * 2 + r;
+                    }
+                    // Add intensity component
+                    colorValue += delta * 256 * 3;
+                  }
+                  pixel.push(colorValue);
                 }
               });
+              
+              // Apply noise reduction
+              if (noiseThreshold > 0) {
+                row.forEach((pixel, i) => {
+                  if (i > 0 && i < row.length - 1) {
+                    const prevPixel = row[i - 1];
+                    const nextPixel = row[i + 1];
+                    const currentValue = pixel[5] ?? 0;
+                    const prevValue = prevPixel[5] ?? 0;
+                    const nextValue = nextPixel[5] ?? 0;
+                    
+                    // If the difference between adjacent pixels is less than noise threshold,
+                    // average them out
+                    if (Math.abs(currentValue - prevValue) < noiseThreshold &&
+                        Math.abs(currentValue - nextValue) < noiseThreshold) {
+                      pixel[5] = (prevValue + currentValue + nextValue) / 3;
+                    }
+                  }
+                });
+              }
               
               // Apply threshold filter - only sort pixels above the threshold
               const thresholdValue = threshold;
@@ -256,7 +317,7 @@ const P5Sketch = () => {
               
               row.forEach(pixel => {
                 const value = pixel[5]; // The sort value we just added
-                if (sortMode === 'brightness' && value !== undefined && value >= thresholdValue) {
+                if ((sortMode === 'brightness' || sortMode === 'color') && value !== undefined && value >= thresholdValue) {
                   pixelsAboveThreshold.push(pixel);
                 } else if ((sortMode === 'hue' || sortMode === 'saturation') && value !== undefined && value >= thresholdValue / 2.55) {
                   // Normalize threshold from 0-255 to 0-100 for saturation, 0-360 for hue
@@ -266,24 +327,69 @@ const P5Sketch = () => {
                 }
               });
               
-              // Sort pixels above threshold
-              pixelsAboveThreshold.sort((a, b) => {
-                const valueA = a[5] ?? 0; // Default to 0 if undefined
-                const valueB = b[5] ?? 0; // Default to 0 if undefined
-                return sortDirection === 'ascending' ? valueA - valueB : valueB - valueA;
-              });
+              // Sort pixels above threshold in sections
+              const sortedSections: Array<[number, number, number, number, number, number?]> = [];
               
-              // Combine sorted pixels above threshold with unsorted pixels below threshold
-              const sortedRow = [...pixelsBelowThreshold, ...pixelsAboveThreshold];
+              // Calculate total section width (sort length + slice width)
+              const totalSectionWidth = sortLength + sliceWidth;
+              
+              // Process each section
+              for (let x = 0; x < sortedImg!.width; x += totalSectionWidth) {
+                // Get pixels for this section
+                const sectionStart = x;
+                const sectionEnd = Math.min(x + sortLength, sortedImg!.width);
+                const section = pixelsAboveThreshold.filter(pixel => {
+                  const pixelX = (pixel[4] / 4) % sortedImg!.width;
+                  return pixelX >= sectionStart && pixelX < sectionEnd;
+                });
+                
+                // Apply intensity-based sorting to the section
+                if (sortIntensity < 100) {
+                  // Only sort a portion of the pixels based on intensity
+                  const pixelsToSort = Math.floor(section.length * (sortIntensity / 100));
+                  const sortedPart = section.slice(0, pixelsToSort);
+                  const unsortedPart = section.slice(pixelsToSort);
+                  
+                  sortedPart.sort((a, b) => {
+                    const valueA = a[5] ?? 0;
+                    const valueB = b[5] ?? 0;
+                    return sortDirection === 'ascending' ? valueA - valueB : valueB - valueA;
+                  });
+                  
+                  sortedSections.push(...sortedPart, ...unsortedPart);
+                } else {
+                  // Sort all pixels in the section
+                  section.sort((a, b) => {
+                    const valueA = a[5] ?? 0;
+                    const valueB = b[5] ?? 0;
+                    return sortDirection === 'ascending' ? valueA - valueB : valueB - valueA;
+                  });
+                  sortedSections.push(...section);
+                }
+                
+                // Add unsorted pixels between sections based on sortInterval
+                if (x + sortLength < sortedImg!.width) {
+                  const unsortedSection = pixelsAboveThreshold.filter(pixel => {
+                    const pixelX = (pixel[4] / 4) % sortedImg!.width;
+                    return pixelX >= sectionEnd && pixelX < x + totalSectionWidth;
+                  });
+                  sortedSections.push(...unsortedSection);
+                }
+              }
+              
+              // Combine sorted sections with unsorted pixels below threshold
+              const sortedRow = [...pixelsBelowThreshold, ...sortedSections];
               
               // Put pixels back in original order
               for (let x = 0; x < sortedImg!.width; x++) {
                 const pixel = sortedRow[x];
-                const i = (y * sortedImg!.width + x) * 4;
-                sortedImg!.pixels[i] = pixel[0];      // R
-                sortedImg!.pixels[i + 1] = pixel[1];  // G
-                sortedImg!.pixels[i + 2] = pixel[2];  // B
-                sortedImg!.pixels[i + 3] = pixel[3];  // A
+                if (pixel) {
+                  const i = (y * sortedImg!.width + x) * 4;
+                  sortedImg!.pixels[i] = pixel[0];      // R
+                  sortedImg!.pixels[i + 1] = pixel[1];  // G
+                  sortedImg!.pixels[i + 2] = pixel[2];  // B
+                  sortedImg!.pixels[i + 3] = pixel[3];  // A
+                }
               }
             }
             
@@ -341,6 +447,7 @@ const P5Sketch = () => {
           const tempCanvas = document.createElement('canvas');
           tempCanvas.width = width;
           tempCanvas.height = height;
+          
           
           const ctx = tempCanvas.getContext('2d');
           if (!ctx) return;
@@ -429,94 +536,198 @@ const P5Sketch = () => {
       
       {/* Sort controls */}
       {imageFile && (
-        <div className="w-full max-w-4xl mb-4 grid grid-cols-1 md:grid-cols-3 gap-6 p-4 bg-gray-100 rounded-lg">
+        <div className="w-full max-w-4xl mb-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 p-6 bg-gray-100 rounded-lg">
           {/* Sort Mode */}
-          <div className="flex flex-col">
-            <label className="mb-2 text-base font-medium text-gray-800">Sort By:</label>
-            <div className="flex gap-4">
-              <label className="flex items-center text-gray-800">
+          <div className="flex flex-col space-y-3">
+            <label className="text-base font-medium text-gray-800">Sort By:</label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex items-center space-x-2 text-gray-800">
                 <input
                   type="radio"
                   name="sortMode"
                   value="brightness"
                   checked={sortMode === 'brightness'}
                   onChange={() => setSortMode('brightness')}
-                  className="mr-2"
+                  className="w-4 h-4"
                 />
-                Brightness
+                <span>Brightness</span>
               </label>
-              <label className="flex items-center text-gray-800">
+              <label className="flex items-center space-x-2 text-gray-800">
+                <input
+                  type="radio"
+                  name="sortMode"
+                  value="color"
+                  checked={sortMode === 'color'}
+                  onChange={() => setSortMode('color')}
+                  className="w-4 h-4"
+                />
+                <span>Color</span>
+              </label>
+              <label className="flex items-center space-x-2 text-gray-800">
                 <input
                   type="radio"
                   name="sortMode"
                   value="hue"
                   checked={sortMode === 'hue'}
                   onChange={() => setSortMode('hue')}
-                  className="mr-2"
+                  className="w-4 h-4"
                 />
-                Hue
+                <span>Hue</span>
               </label>
-              <label className="flex items-center text-gray-800">
+              <label className="flex items-center space-x-2 text-gray-800">
                 <input
                   type="radio"
                   name="sortMode"
                   value="saturation"
                   checked={sortMode === 'saturation'}
                   onChange={() => setSortMode('saturation')}
-                  className="mr-2"
+                  className="w-4 h-4"
                 />
-                Saturation
+                <span>Saturation</span>
               </label>
             </div>
           </div>
           
           {/* Threshold */}
-          <div className="flex flex-col">
-            <label className="mb-2 text-base font-medium text-gray-800">Threshold:</label>
-            <div className="relative w-full">
-              <div className="flex justify-between mb-1 px-1">
-                <span className="text-sm text-gray-800">chill</span>
-                <span className="text-sm text-gray-800">cooked</span>
+          <div className="flex flex-col space-y-3">
+            <label className="text-base font-medium text-gray-800">Threshold:</label>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>chill</span>
+                <span>cooked</span>
               </div>
               <input
                 type="range"
                 min="0"
                 max="255"
-                // Invert the value for display, 255 - threshold gives us the inverse
                 value={255 - threshold}
-                // Invert again when setting the value
                 onChange={(e) => setThreshold(255 - parseInt(e.target.value))}
-                className="w-full"
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
               />
             </div>
           </div>
           
           {/* Sort Direction */}
-          <div className="flex flex-col">
-            <label className="mb-2 text-base font-medium text-gray-800">Direction:</label>
-            <div className="flex gap-4">
-              <label className="flex items-center text-gray-800">
+          <div className="flex flex-col space-y-3">
+            <label className="text-base font-medium text-gray-800">Direction:</label>
+            <div className="flex space-x-6">
+              <label className="flex items-center space-x-2 text-gray-800">
                 <input
                   type="radio"
                   name="sortDirection"
                   value="ascending"
                   checked={sortDirection === 'ascending'}
                   onChange={() => setSortDirection('ascending')}
-                  className="mr-2"
+                  className="w-4 h-4"
                 />
-                Ascending
+                <span>Ascending</span>
               </label>
-              <label className="flex items-center text-gray-800">
+              <label className="flex items-center space-x-2 text-gray-800">
                 <input
                   type="radio"
                   name="sortDirection"
                   value="descending"
                   checked={sortDirection === 'descending'}
                   onChange={() => setSortDirection('descending')}
-                  className="mr-2"
+                  className="w-4 h-4"
                 />
-                Descending
+                <span>Descending</span>
               </label>
+            </div>
+          </div>
+
+          {/* Sort Interval */}
+          <div className="flex flex-col space-y-3">
+            <label className="text-base font-medium text-gray-800">Sort Interval:</label>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>tight</span>
+                <span>sparse</span>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="50"
+                value={sortInterval}
+                onChange={(e) => setSortInterval(parseInt(e.target.value))}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+              />
+            </div>
+          </div>
+
+          {/* Sort Length */}
+          <div className="flex flex-col space-y-3">
+            <label className="text-base font-medium text-gray-800">Sort Length:</label>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>short</span>
+                <span>long</span>
+              </div>
+              <input
+                type="range"
+                min="10"
+                max="200"
+                value={sortLength}
+                onChange={(e) => setSortLength(parseInt(e.target.value))}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+              />
+            </div>
+          </div>
+
+          {/* Noise Threshold */}
+          <div className="flex flex-col space-y-3">
+            <label className="text-base font-medium text-gray-800">Noise Reduction:</label>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>none</span>
+                <span>max</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="50"
+                value={noiseThreshold}
+                onChange={(e) => setNoiseThreshold(parseInt(e.target.value))}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+              />
+            </div>
+          </div>
+
+          {/* Sort Intensity */}
+          <div className="flex flex-col space-y-3">
+            <label className="text-base font-medium text-gray-800">Sort Intensity:</label>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>subtle</span>
+                <span>intense</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={sortIntensity}
+                onChange={(e) => setSortIntensity(parseInt(e.target.value))}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+              />
+            </div>
+          </div>
+
+          {/* Slice Width */}
+          <div className="flex flex-col space-y-3">
+            <label className="text-base font-medium text-gray-800">Vertical Slices:</label>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>none</span>
+                <span>wide</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="50"
+                value={sliceWidth}
+                onChange={(e) => setSliceWidth(parseInt(e.target.value))}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+              />
             </div>
           </div>
         </div>
