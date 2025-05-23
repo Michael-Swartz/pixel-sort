@@ -21,10 +21,11 @@ const P5Sketch = () => {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const p5Instance = useRef<ExtendedP5 | null>(null);
   const [isSorting, setIsSorting] = useState(false);
+  const [hasSortedImage, setHasSortedImage] = useState(false);
   
   // Sort configuration state
   const [sortMode, setSortMode] = useState<'brightness' | 'hue' | 'saturation'>('brightness');
-  const [threshold, setThreshold] = useState<number>(0); // 0-255
+  const [threshold, setThreshold] = useState<number>(127); // 0-255
   const [sortDirection, setSortDirection] = useState<'ascending' | 'descending'>('ascending');
   
   // Handle file selection
@@ -39,11 +40,29 @@ const P5Sketch = () => {
   const handlePixelSortClick = () => {
     if (p5Instance.current && p5Instance.current.startPixelSort) {
       setIsSorting(true);
-      p5Instance.current.startPixelSort({
-        sortMode,
-        threshold,
-        sortDirection
-      });
+      
+      // Use setTimeout to allow the UI to update with the spinner before starting the heavy computation
+      setTimeout(() => {
+        p5Instance.current!.startPixelSort({
+          sortMode,
+          threshold,
+          sortDirection
+        });
+      }, 50); // Small delay to ensure UI updates first
+    }
+  };
+  
+  // Download the sorted image
+  const handleDownload = () => {
+    if (p5Instance.current && hasSortedImage) {
+      const p5 = p5Instance.current;
+      
+      // Use p5's save function to directly save the canvas
+      // This will automatically extract just the visible portion of the sorted image
+      // Add a custom function to the p5 sketch to handle this
+      if (p5.downloadSortedImage) {
+        p5.downloadSortedImage();
+      }
     }
   };
   
@@ -63,7 +82,7 @@ const P5Sketch = () => {
         
         p.setup = () => {
           // Create wider canvas to accommodate both images side by side
-          p.createCanvas(1200, 600);
+          p.createCanvas(1200, 500);
           p.background(220);
         };
         
@@ -157,114 +176,191 @@ const P5Sketch = () => {
           // Load pixels for manipulation
           sortedImg.loadPixels();
           
-          // Pixel sort each row independently
-          for (let y = 0; y < sortedImg.height; y++) {
-            // Extract the row of pixels
-            const row: any[] = [];
-            for (let x = 0; x < sortedImg.width; x++) {
-              const i = (y * sortedImg.width + x) * 4;
-              // Store pixel as [r,g,b,a,index] to remember original position
-              row.push([
-                sortedImg.pixels[i],
-                sortedImg.pixels[i + 1],
-                sortedImg.pixels[i + 2],
-                sortedImg.pixels[i + 3],
-                i
-              ]);
-            }
+          // Process in chunks to keep UI responsive
+          const chunkSize = 10; // Number of rows to process per chunk
+          let currentRow = 0;
+          
+          const processChunk = () => {
+            // Process a chunk of rows
+            const endRow = Math.min(currentRow + chunkSize, sortedImg!.height);
             
-            // Calculate pixel values based on selected sort mode
-            row.forEach(pixel => {
-              const r = pixel[0];
-              const g = pixel[1];
-              const b = pixel[2];
+            // Process rows in the current chunk
+            for (let y = currentRow; y < endRow; y++) {
+              // Extract the row of pixels
+              const row: any[] = [];
+              for (let x = 0; x < sortedImg!.width; x++) {
+                const i = (y * sortedImg!.width + x) * 4;
+                // Store pixel as [r,g,b,a,index] to remember original position
+                row.push([
+                  sortedImg!.pixels[i],
+                  sortedImg!.pixels[i + 1],
+                  sortedImg!.pixels[i + 2],
+                  sortedImg!.pixels[i + 3],
+                  i
+                ]);
+              }
               
-              // Add sort value as the 5th element
-              if (sortMode === 'brightness') {
-                // Use average of RGB for brightness
-                const brightness = (r + g + b) / 3;
-                pixel.push(brightness);
-              } else if (sortMode === 'hue') {
-                // Convert RGB to HSL to get hue
-                const max = Math.max(r, g, b);
-                const min = Math.min(r, g, b);
-                let hue = 0;
+              // Calculate pixel values based on selected sort mode
+              row.forEach(pixel => {
+                const r = pixel[0];
+                const g = pixel[1];
+                const b = pixel[2];
                 
-                if (max === min) {
-                  hue = 0; // no color, achromatic (gray)
-                } else {
-                  const d = max - min;
-                  if (max === r) {
-                    hue = (g - b) / d + (g < b ? 6 : 0);
-                  } else if (max === g) {
-                    hue = (b - r) / d + 2;
-                  } else if (max === b) {
-                    hue = (r - g) / d + 4;
+                // Add sort value as the 5th element
+                if (sortMode === 'brightness') {
+                  // Use average of RGB for brightness
+                  const brightness = (r + g + b) / 3;
+                  pixel.push(brightness);
+                } else if (sortMode === 'hue') {
+                  // Convert RGB to HSL to get hue
+                  const max = Math.max(r, g, b);
+                  const min = Math.min(r, g, b);
+                  let hue = 0;
+                  
+                  if (max === min) {
+                    hue = 0; // no color, achromatic (gray)
+                  } else {
+                    const d = max - min;
+                    if (max === r) {
+                      hue = (g - b) / d + (g < b ? 6 : 0);
+                    } else if (max === g) {
+                      hue = (b - r) / d + 2;
+                    } else if (max === b) {
+                      hue = (r - g) / d + 4;
+                    }
+                    hue *= 60;
                   }
-                  hue *= 60;
+                  pixel.push(hue);
+                } else if (sortMode === 'saturation') {
+                  // Convert RGB to HSL to get saturation
+                  const max = Math.max(r, g, b);
+                  const min = Math.min(r, g, b);
+                  const l = (max + min) / 2;
+                  
+                  let saturation = 0;
+                  if (max !== min) {
+                    const d = max - min;
+                    saturation = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                  }
+                  pixel.push(saturation * 100);
                 }
-                pixel.push(hue);
-              } else if (sortMode === 'saturation') {
-                // Convert RGB to HSL to get saturation
-                const max = Math.max(r, g, b);
-                const min = Math.min(r, g, b);
-                const l = (max + min) / 2;
-                
-                let saturation = 0;
-                if (max !== min) {
-                  const d = max - min;
-                  saturation = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+              });
+              
+              // Apply threshold filter - only sort pixels above the threshold
+              const thresholdValue = threshold;
+              let pixelsAboveThreshold: any[] = [];
+              let pixelsBelowThreshold: any[] = [];
+              
+              row.forEach(pixel => {
+                const value = pixel[5]; // The sort value we just added
+                if (sortMode === 'brightness' && value >= thresholdValue) {
+                  pixelsAboveThreshold.push(pixel);
+                } else if ((sortMode === 'hue' || sortMode === 'saturation') && value >= thresholdValue / 2.55) {
+                  // Normalize threshold from 0-255 to 0-100 for saturation, 0-360 for hue
+                  pixelsAboveThreshold.push(pixel);
+                } else {
+                  pixelsBelowThreshold.push(pixel);
                 }
-                pixel.push(saturation * 100);
+              });
+              
+              // Sort pixels above threshold
+              pixelsAboveThreshold.sort((a, b) => {
+                const valueA = a[5];
+                const valueB = b[5];
+                return sortDirection === 'ascending' ? valueA - valueB : valueB - valueA;
+              });
+              
+              // Combine sorted pixels above threshold with unsorted pixels below threshold
+              const sortedRow = [...pixelsBelowThreshold, ...pixelsAboveThreshold];
+              
+              // Put pixels back in original order
+              for (let x = 0; x < sortedImg!.width; x++) {
+                const pixel = sortedRow[x];
+                const i = (y * sortedImg!.width + x) * 4;
+                sortedImg!.pixels[i] = pixel[0];      // R
+                sortedImg!.pixels[i + 1] = pixel[1];  // G
+                sortedImg!.pixels[i + 2] = pixel[2];  // B
+                sortedImg!.pixels[i + 3] = pixel[3];  // A
               }
-            });
-            
-            // Apply threshold filter - only sort pixels above the threshold
-            const thresholdValue = threshold;
-            let pixelsAboveThreshold: any[] = [];
-            let pixelsBelowThreshold: any[] = [];
-            
-            row.forEach(pixel => {
-              const value = pixel[5]; // The sort value we just added
-              if (sortMode === 'brightness' && value >= thresholdValue) {
-                pixelsAboveThreshold.push(pixel);
-              } else if ((sortMode === 'hue' || sortMode === 'saturation') && value >= thresholdValue / 2.55) {
-                // Normalize threshold from 0-255 to 0-100 for saturation, 0-360 for hue
-                pixelsAboveThreshold.push(pixel);
-              } else {
-                pixelsBelowThreshold.push(pixel);
-              }
-            });
-            
-            // Sort pixels above threshold
-            pixelsAboveThreshold.sort((a, b) => {
-              const valueA = a[5];
-              const valueB = b[5];
-              return sortDirection === 'ascending' ? valueA - valueB : valueB - valueA;
-            });
-            
-            // Combine sorted pixels above threshold with unsorted pixels below threshold
-            const sortedRow = [...pixelsBelowThreshold, ...pixelsAboveThreshold];
-            
-            // Put pixels back in original order
-            for (let x = 0; x < sortedImg.width; x++) {
-              const pixel = sortedRow[x];
-              const i = (y * sortedImg.width + x) * 4;
-              sortedImg.pixels[i] = pixel[0];      // R
-              sortedImg.pixels[i + 1] = pixel[1];  // G
-              sortedImg.pixels[i + 2] = pixel[2];  // B
-              sortedImg.pixels[i + 3] = pixel[3];  // A
             }
+            
+            // Update current row position
+            currentRow = endRow;
+            
+            // Show progress by updating the pixels after each chunk
+            sortedImg!.updatePixels();
+            
+            // Continue processing if not done
+            if (currentRow < sortedImg!.height) {
+              // Schedule next chunk with a small delay to allow UI updates
+              setTimeout(processChunk, 0);
+            } else {
+              // All done
+              isPixelSorted = true;
+              setHasSortedImage(true);
+              setIsSorting(false);
+            }
+          };
+          
+          // Start processing the first chunk
+          processChunk();
+        };
+        
+        // Custom function to download the sorted image
+        p.downloadSortedImage = (useDisplaySize = false) => {
+          if (!sortedImg) return;
+          
+          let imgToDownload = sortedImg;
+          let width = sortedImg.width;
+          let height = sortedImg.height;
+          
+          if (useDisplaySize && originalImg) {
+            // Calculate the display size based on canvas dimensions
+            const ratio = Math.min(
+              p.width / 2 / originalImg.width,
+              p.height / originalImg.height
+            ) * 0.9; // 90% to leave some margin
+            
+            width = Math.round(originalImg.width * ratio);
+            height = Math.round(originalImg.height * ratio);
+            
+            // Create a resized version of the image
+            const resized = p.createImage(width, height);
+            imgToDownload.loadPixels();
+            resized.loadPixels();
+            
+            // Resize the image using p5's built-in resize
+            imgToDownload.resize(width, height);
+            imgToDownload = imgToDownload; // Use the resized image
           }
           
-          // Update the pixels in the image
-          sortedImg.updatePixels();
-          isPixelSorted = true;
+          // Create a temporary canvas to draw just the sorted image
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = width;
+          tempCanvas.height = height;
           
-          // Finish sorting and update UI state
-          setTimeout(() => {
-            setIsSorting(false);
-          }, 0);
+          const ctx = tempCanvas.getContext('2d');
+          if (!ctx) return;
+          
+          // Draw only the sorted image onto the canvas
+          imgToDownload.loadPixels(); // Make sure pixels are loaded
+          const imageData = new ImageData(
+            new Uint8ClampedArray(imgToDownload.pixels),
+            width,
+            height
+          );
+          ctx.putImageData(imageData, 0, 0);
+          
+          // Convert canvas to data URL
+          const dataURL = tempCanvas.toDataURL('image/png');
+          
+          // Create a link element to trigger download
+          const a = document.createElement('a');
+          a.href = dataURL;
+          a.download = 'pixel-sorted-image.png';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
         };
       };
       
@@ -309,15 +405,22 @@ const P5Sketch = () => {
         <button 
           onClick={handlePixelSortClick}
           disabled={!imageFile || isSorting}
-          className={`font-bold py-2 px-4 rounded ${
+          className={`font-bold py-2 px-4 rounded relative ${
             !imageFile ? 
               'bg-gray-400 cursor-not-allowed' : 
               isSorting ? 
-                'bg-gray-500 cursor-wait' : 
+                'bg-gray-500' : 
                 'bg-green-500 hover:bg-green-700 text-white cursor-pointer'
           }`}
         >
-          {isSorting ? 'Sorting...' : 'Pixel Sort'}
+          {isSorting ? (
+            <>
+              <span className="opacity-0">Pixel Sort</span>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-white"></div>
+              </div>
+            </>
+          ) : 'Pixel Sort'}
         </button>
       </div>
       
@@ -366,15 +469,23 @@ const P5Sketch = () => {
           
           {/* Threshold */}
           <div className="flex flex-col">
-            <label className="mb-2 text-base font-medium text-gray-800">Threshold: <span className="font-bold">{threshold}</span></label>
-            <input
-              type="range"
-              min="0"
-              max="255"
-              value={threshold}
-              onChange={(e) => setThreshold(parseInt(e.target.value))}
-              className="w-full"
-            />
+            <label className="mb-2 text-base font-medium text-gray-800">Threshold:</label>
+            <div className="relative w-full">
+              <div className="flex justify-between mb-1 px-1">
+                <span className="text-sm text-gray-800">chill</span>
+                <span className="text-sm text-gray-800">cooked</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="255"
+                // Invert the value for display, 255 - threshold gives us the inverse
+                value={255 - threshold}
+                // Invert again when setting the value
+                onChange={(e) => setThreshold(255 - parseInt(e.target.value))}
+                className="w-full"
+              />
+            </div>
           </div>
           
           {/* Sort Direction */}
@@ -409,6 +520,19 @@ const P5Sketch = () => {
       )}
       
       <div ref={sketchRef}></div>
+      
+      {/* Download button */}
+      <button 
+        onClick={handleDownload}
+        disabled={!hasSortedImage}
+        className={`mt-8 mb-6 py-3 px-6 rounded ${
+          hasSortedImage ? 
+            'bg-blue-500 hover:bg-blue-700 text-white cursor-pointer' : 
+            'bg-gray-400 text-gray-300 cursor-not-allowed'
+        }`}
+      >
+        Download
+      </button>
     </div>
   );
 };
