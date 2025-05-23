@@ -7,6 +7,7 @@ import type p5 from 'p5';
 interface ExtendedP5 extends p5 {
   updateWithImage?: (file: File) => void;
   startPixelSort?: (options: SortOptions) => void;
+  downloadSortedImage?: (useDisplaySize?: boolean) => void;
 }
 
 // Define a type for our sort options
@@ -43,11 +44,13 @@ const P5Sketch = () => {
       
       // Use setTimeout to allow the UI to update with the spinner before starting the heavy computation
       setTimeout(() => {
-        p5Instance.current!.startPixelSort({
-          sortMode,
-          threshold,
-          sortDirection
-        });
+        if (p5Instance.current && p5Instance.current.startPixelSort) {
+          p5Instance.current.startPixelSort({
+            sortMode,
+            threshold,
+            sortDirection
+          });
+        }
       }, 50); // Small delay to ensure UI updates first
     }
   };
