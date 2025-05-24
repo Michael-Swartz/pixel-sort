@@ -8,6 +8,9 @@ interface ExtendedP5 extends p5 {
   updateWithImage?: (file: File) => void;
   startPixelSort?: (options: SortOptions) => void;
   downloadSortedImage?: (useDisplaySize?: boolean) => void;
+  sortedImg?: p5.Image | null;
+  originalImg?: p5.Image | null;
+  isPixelSorted?: boolean;
 }
 
 // Define a type for our sort options
@@ -19,6 +22,7 @@ interface SortOptions {
   noiseThreshold: number; // New parameter for noise reduction
   sortIntensity: number; // New parameter for sort intensity
   sliceWidth: number;    // New parameter for width of unsorted vertical slices
+  sortAngle: number;    // New parameter for sort angle (degrees)
 }
 
 const P5Sketch = () => {
@@ -27,6 +31,8 @@ const P5Sketch = () => {
   const p5Instance = useRef<ExtendedP5 | null>(null);
   const [isSorting, setIsSorting] = useState(false);
   const [hasSortedImage, setHasSortedImage] = useState(false);
+  const [isPixelSorted, setIsPixelSorted] = useState(false);
+  const [sortProgress, setSortProgress] = useState(0);
   
   // Sort configuration state
   const [sortMode, setSortMode] = useState<'brightness' | 'hue' | 'saturation' | 'color'>('brightness');
@@ -36,6 +42,7 @@ const P5Sketch = () => {
   const [noiseThreshold, setNoiseThreshold] = useState<number>(10); // New state for noise
   const [sortIntensity, setSortIntensity] = useState<number>(100);  // New state for intensity
   const [sliceWidth, setSliceWidth] = useState<number>(0);     // New state for slice width
+  const [sortAngle, setSortAngle] = useState<number>(0);    // New state for sort angle (degrees)
   
   // Handle file selection
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -47,23 +54,30 @@ const P5Sketch = () => {
 
   // Handle pixel sort button click
   const handlePixelSortClick = () => {
-    if (p5Instance.current && p5Instance.current.startPixelSort) {
-      setIsSorting(true);
-      
-      // Use setTimeout to allow the UI to update with the spinner before starting the heavy computation
-      setTimeout(() => {
-        if (p5Instance.current && p5Instance.current.startPixelSort) {
-          p5Instance.current.startPixelSort({
-            sortMode,
-            threshold,
-            sortDirection,
-            sortLength,
-            noiseThreshold,
-            sortIntensity,
-            sliceWidth
-          });
-        }
-      }, 50); // Small delay to ensure UI updates first
+    if (!imageFile || !p5Instance.current) return;
+    
+    setIsSorting(true);
+    setHasSortedImage(false);
+    setIsPixelSorted(false);
+    setSortProgress(0);
+    
+    // Reset the sorted image
+    if (p5Instance.current.sortedImg) {
+      p5Instance.current.sortedImg = null;
+    }
+    
+    // Start pixel sorting
+    if (p5Instance.current.startPixelSort) {
+      p5Instance.current.startPixelSort({
+        sortMode,
+        threshold,
+        sortDirection,
+        sortLength,
+        noiseThreshold,
+        sortIntensity,
+        sliceWidth,
+        sortAngle,
+      });
     }
   };
   
@@ -81,6 +95,39 @@ const P5Sketch = () => {
     }
   };
   
+  // Rotate image handler
+  const handleRotate = () => {
+    if (p5Instance.current && p5Instance.current.originalImg) {
+      const p5 = p5Instance.current;
+      const src = p5.originalImg;
+      if (!src) return;
+      // Create a new image with swapped width/height
+      const rotated = p5.createImage(src.height, src.width);
+      src.loadPixels();
+      rotated.loadPixels();
+      // Rotate 90 degrees clockwise
+      for (let x = 0; x < src.width; x++) {
+        for (let y = 0; y < src.height; y++) {
+          const srcIdx = 4 * (y * src.width + x);
+          const dstX = src.height - 1 - y;
+          const dstY = x;
+          const dstIdx = 4 * (dstY * rotated.width + dstX);
+          rotated.pixels[dstIdx] = src.pixels[srcIdx];
+          rotated.pixels[dstIdx + 1] = src.pixels[srcIdx + 1];
+          rotated.pixels[dstIdx + 2] = src.pixels[srcIdx + 2];
+          rotated.pixels[dstIdx + 3] = src.pixels[srcIdx + 3];
+        }
+      }
+      rotated.updatePixels();
+      // Set as new original image
+      p5.originalImg = rotated;
+      // Clear sorted image
+      p5.sortedImg = null;
+      // Force redraw
+      p5.redraw();
+    }
+  };
+  
   useEffect(() => {
     // Only run in browser environment
     if (typeof window === 'undefined' || sketchRef.current === null) return;
@@ -91,8 +138,6 @@ const P5Sketch = () => {
       
       // Define the sketch
       const sketch = (p: ExtendedP5) => {
-        let originalImg: p5.Image | null = null;
-        let sortedImg: p5.Image | null = null;
         let isPixelSorted = false;
         
         p.setup = () => {
@@ -105,22 +150,22 @@ const P5Sketch = () => {
           p.background(220);
           
           // Display the images if loaded
-          if (originalImg) {
+          if (p.originalImg) {
             // Calculate aspect ratio to fit the original image within half the canvas
             const ratio = Math.min(
-              p.width / 2 / originalImg.width,
-              p.height / originalImg.height
+              p.width / 2 / p.originalImg.width,
+              p.height / p.originalImg.height
             ) * 0.9; // 90% to leave some margin
             
-            const imgWidth = originalImg.width * ratio;
-            const imgHeight = originalImg.height * ratio;
+            const imgWidth = p.originalImg.width * ratio;
+            const imgHeight = p.originalImg.height * ratio;
             
             // Position original image on the left side
             const x1 = (p.width / 4) - (imgWidth / 2);
             const y1 = (p.height - imgHeight) / 2;
             
-            // Draw original image
-            p.image(originalImg, x1, y1, imgWidth, imgHeight);
+            // Draw original image (no rotation)
+            p.image(p.originalImg, x1, y1, imgWidth, imgHeight);
             
             // Draw label for original image
             p.fill(0);
@@ -132,18 +177,17 @@ const P5Sketch = () => {
             p.textAlign(p.CENTER);
             p.text("Sorted Image", p.width * 3/4, 30);
             
-            if (sortedImg && isPixelSorted) {
+            if (p.sortedImg) {
               // Position sorted image on the right side
               const x2 = (p.width * 3/4) - (imgWidth / 2);
               const y2 = (p.height - imgHeight) / 2;
-              
-              p.image(sortedImg, x2, y2, imgWidth, imgHeight);
+              p.image(p.sortedImg, x2, y2, imgWidth, imgHeight);
             } else {
               // Show placeholder for sorted image
               p.fill(180);
               p.textAlign(p.CENTER, p.CENTER);
               p.text(
-                isPixelSorted ? "Processing..." : "Click 'Pixel Sort' to see result", 
+                isSorting ? "Processing..." : "Click 'Pixel Sort' to see result", 
                 p.width * 3/4, 
                 p.height/2
               );
@@ -162,9 +206,8 @@ const P5Sketch = () => {
         p.updateWithImage = (file: File) => {
           const objectURL = URL.createObjectURL(file);
           p.loadImage(objectURL, loadedImg => {
-            originalImg = loadedImg;
-            sortedImg = null;
-            isPixelSorted = false;
+            p.originalImg = loadedImg;
+            p.sortedImg = null;
             
             // Revoke the object URL to free memory
             URL.revokeObjectURL(objectURL);
@@ -175,51 +218,58 @@ const P5Sketch = () => {
 
         // Pixel sorting function
         p.startPixelSort = (options: SortOptions) => {
-          if (!originalImg) return;
+          if (!p.originalImg) return;
           
           // Get sort options from parameters
           const { 
             sortMode, threshold, sortDirection, sortLength, 
-            noiseThreshold, sortIntensity, sliceWidth
+            noiseThreshold, sortIntensity, sliceWidth,
+            sortAngle
           } = options;
           
           // Create a copy of the original image for sorting
-          sortedImg = p.createImage(originalImg.width, originalImg.height);
+          let sortedImg = p.createImage(p.originalImg.width, p.originalImg.height);
           sortedImg.copy(
-            originalImg, 
-            0, 0, originalImg.width, originalImg.height, 
-            0, 0, originalImg.width, originalImg.height
+            p.originalImg, 
+            0, 0, p.originalImg.width, p.originalImg.height, 
+            0, 0, p.originalImg.width, p.originalImg.height
           );
           
           // Load pixels for manipulation
           sortedImg.loadPixels();
           
           // Process in chunks to keep UI responsive
-          const chunkSize = 10; // Number of rows to process per chunk
-          let currentRow = 0;
+          const chunkSize = 10; // Number of lines to process per chunk
+          let currentLine = 0;
           
           const processChunk = () => {
-            // Process a chunk of rows
-            const endRow = Math.min(currentRow + chunkSize, sortedImg!.height);
-            
-            // Process rows in the current chunk
-            for (let y = currentRow; y < endRow; y++) {
-              // Extract the row of pixels
-              const row: Array<[number, number, number, number, number, number?]> = [];
-              for (let x = 0; x < sortedImg!.width; x++) {
-                const i = (y * sortedImg!.width + x) * 4;
-                // Store pixel as [r,g,b,a,index] to remember original position
-                row.push([
-                  sortedImg!.pixels[i],
-                  sortedImg!.pixels[i + 1],
-                  sortedImg!.pixels[i + 2],
-                  sortedImg!.pixels[i + 3],
-                  i
+            // For 0°: process columns (vertical). For 90°: process rows (horizontal).
+            const isHorizontal = Math.abs(sortAngle % 180) === 90;
+            const maxLines = isHorizontal ? sortedImg!.height : sortedImg!.width;
+            const endLine = Math.min(currentLine + chunkSize, maxLines);
+            for (let line = currentLine; line < endLine; line++) {
+              // Extract the line of pixels
+              const linePixels: Array<[number, number, number, number, number, number?]> = [];
+              for (let i = 0; i < (isHorizontal ? sortedImg!.width : sortedImg!.height); i++) {
+                let idx;
+                if (isHorizontal) {
+                  // horizontal: x = i, y = line
+                  idx = (line * sortedImg!.width + i) * 4;
+                } else {
+                  // vertical: x = line, y = i
+                  idx = (i * sortedImg!.width + line) * 4;
+                }
+                linePixels.push([
+                  sortedImg!.pixels[idx],
+                  sortedImg!.pixels[idx + 1],
+                  sortedImg!.pixels[idx + 2],
+                  sortedImg!.pixels[idx + 3],
+                  idx
                 ]);
               }
               
               // Calculate pixel values based on selected sort mode
-              row.forEach(pixel => {
+              linePixels.forEach(pixel => {
                 const r = pixel[0];
                 const g = pixel[1];
                 const b = pixel[2];
@@ -292,10 +342,10 @@ const P5Sketch = () => {
               
               // Apply noise reduction
               if (noiseThreshold > 0) {
-                row.forEach((pixel, i) => {
-                  if (i > 0 && i < row.length - 1) {
-                    const prevPixel = row[i - 1];
-                    const nextPixel = row[i + 1];
+                linePixels.forEach((pixel, i) => {
+                  if (i > 0 && i < linePixels.length - 1) {
+                    const prevPixel = linePixels[i - 1];
+                    const nextPixel = linePixels[i + 1];
                     const currentValue = pixel[5] ?? 0;
                     const prevValue = prevPixel[5] ?? 0;
                     const nextValue = nextPixel[5] ?? 0;
@@ -315,7 +365,7 @@ const P5Sketch = () => {
               const pixelsAboveThreshold: Array<[number, number, number, number, number, number?]> = [];
               const pixelsBelowThreshold: Array<[number, number, number, number, number, number?]> = [];
               
-              row.forEach(pixel => {
+              linePixels.forEach(pixel => {
                 const value = pixel[5]; // The sort value we just added
                 if ((sortMode === 'brightness' || sortMode === 'color') && value !== undefined && value >= thresholdValue) {
                   pixelsAboveThreshold.push(pixel);
@@ -381,33 +431,47 @@ const P5Sketch = () => {
               const sortedRow = [...pixelsBelowThreshold, ...sortedSections];
               
               // Put pixels back in original order
-              for (let x = 0; x < sortedImg!.width; x++) {
-                const pixel = sortedRow[x];
+              for (let i = 0; i < linePixels.length; i++) {
+                const pixel = sortedRow[i];
                 if (pixel) {
-                  const i = (y * sortedImg!.width + x) * 4;
-                  sortedImg!.pixels[i] = pixel[0];      // R
-                  sortedImg!.pixels[i + 1] = pixel[1];  // G
-                  sortedImg!.pixels[i + 2] = pixel[2];  // B
-                  sortedImg!.pixels[i + 3] = pixel[3];  // A
+                  let idx;
+                  if (isHorizontal) {
+                    // horizontal: x = i, y = line
+                    idx = (line * sortedImg!.width + i) * 4;
+                  } else {
+                    // vertical: x = line, y = i
+                    idx = (i * sortedImg!.width + line) * 4;
+                  }
+                  sortedImg!.pixels[idx] = pixel[0];      // R
+                  sortedImg!.pixels[idx + 1] = pixel[1];  // G
+                  sortedImg!.pixels[idx + 2] = pixel[2];  // B
+                  sortedImg!.pixels[idx + 3] = pixel[3];  // A
                 }
               }
             }
             
-            // Update current row position
-            currentRow = endRow;
+            // Update current line position
+            currentLine = endLine;
+            
+            // Calculate and update progress
+            const progress = (currentLine / maxLines) * 100;
+            setSortProgress(progress);
             
             // Show progress by updating the pixels after each chunk
             sortedImg!.updatePixels();
+            p.sortedImg = sortedImg;
             
             // Continue processing if not done
-            if (currentRow < sortedImg!.height) {
+            if (currentLine < maxLines) {
               // Schedule next chunk with a small delay to allow UI updates
               setTimeout(processChunk, 0);
             } else {
               // All done
-              isPixelSorted = true;
+              p.isPixelSorted = true;
+              setIsPixelSorted(true);
               setHasSortedImage(true);
               setIsSorting(false);
+              setSortProgress(100);
             }
           };
           
@@ -417,21 +481,21 @@ const P5Sketch = () => {
         
         // Custom function to download the sorted image
         p.downloadSortedImage = (useDisplaySize = false) => {
-          if (!sortedImg) return;
+          if (!p.sortedImg) return;
           
-          let imgToDownload = sortedImg;
-          let width = sortedImg.width;
-          let height = sortedImg.height;
+          let imgToDownload = p.sortedImg;
+          let width = p.sortedImg.width;
+          let height = p.sortedImg.height;
           
-          if (useDisplaySize && originalImg) {
+          if (useDisplaySize && p.originalImg) {
             // Calculate the display size based on canvas dimensions
             const ratio = Math.min(
-              p.width / 2 / originalImg.width,
-              p.height / originalImg.height
+              p.width / 2 / p.originalImg.width,
+              p.height / p.originalImg.height
             ) * 0.9; // 90% to leave some margin
             
-            width = Math.round(originalImg.width * ratio);
-            height = Math.round(originalImg.height * ratio);
+            width = Math.round(p.originalImg.width * ratio);
+            height = Math.round(p.originalImg.height * ratio);
             
             // Create a resized version of the image
             const resized = p.createImage(width, height);
@@ -490,7 +554,7 @@ const P5Sketch = () => {
         p5Instance.current.remove();
       }
     };
-  }, [imageFile]); // Added imageFile as a dependency
+  }, [imageFile]); // Added imageFile as dependencies
   
   // Effect to handle image updates
   useEffect(() => {
@@ -531,6 +595,13 @@ const P5Sketch = () => {
               </div>
             </>
           ) : 'Pixel Sort'}
+        </button>
+        <button
+          onClick={handleRotate}
+          disabled={!imageFile || isSorting}
+          className={`font-bold py-2 px-4 rounded bg-yellow-500 hover:bg-yellow-600 text-white ${(!imageFile || isSorting) ? 'opacity-50 cursor-not-allowed' : ''}`}
+        >
+          Rotate
         </button>
       </div>
       
@@ -711,10 +782,47 @@ const P5Sketch = () => {
               />
             </div>
           </div>
+
+          {/* Sort Angle */}
+          <div className="flex flex-col space-y-3">
+            <label className="text-base font-medium text-gray-800">Sort Angle:</label>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>0°</span>
+                <span>90°</span>
+                <span>180°</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="180"
+                step="90"
+                value={sortAngle}
+                onChange={(e) => setSortAngle(Math.round(parseInt(e.target.value) / 90) * 90)}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+              />
+              <div className="text-center text-xs text-gray-500">{sortAngle}°</div>
+            </div>
+          </div>
         </div>
       )}
       
       <div ref={sketchRef}></div>
+      
+      {/* Progress bar */}
+      {isSorting && (
+        <div className="w-full flex flex-col items-center mt-4">
+          <div className="w-full sm:w-[400px] md:w-[600px] bg-gray-200 rounded-full h-2.5">
+            <div 
+              className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out"
+              style={{ width: `${sortProgress}%` }}
+            ></div>
+          </div>
+          <div className="text-center mt-2 text-sm text-gray-600 w-full sm:w-[400px] md:w-[600px]">
+            Processing: {Math.round(sortProgress)}%
+          </div>
+        </div>
+      )}
       
       {/* Download button */}
       <button 
