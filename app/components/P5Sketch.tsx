@@ -43,6 +43,9 @@ const P5Sketch = () => {
   const [sliceWidth, setSliceWidth] = useState<number>(0);     // New state for slice width
   const [sortAngle, setSortAngle] = useState<number>(0);    // New state for sort angle (degrees)
   
+  // Throttle progress updates for the progress bar
+  const lastProgressUpdateRef = useRef<number>(0);
+  
   // Handle file selection
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
@@ -451,7 +454,11 @@ const P5Sketch = () => {
             
             // Calculate and update progress
             const progress = (currentLine / maxLines) * 100;
-            setSortProgress(progress);
+            const now = Date.now();
+            if (now - lastProgressUpdateRef.current > 50 || progress === 100) {
+              setSortProgress(progress);
+              lastProgressUpdateRef.current = now;
+            }
             
             // Show progress by updating the pixels after each chunk
             sortedImg!.updatePixels();
