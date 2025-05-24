@@ -16,13 +16,13 @@ interface ExtendedP5 extends p5 {
 // Define a type for our sort options
 interface SortOptions {
   sortMode: 'brightness' | 'hue' | 'saturation' | 'color';
-  threshold: number;
+  sortStrength: number;  // Combined parameter (0-100)
   sortDirection: 'ascending' | 'descending';
-  sortLength: number;    // New parameter for length of sorted sections
-  noiseThreshold: number; // New parameter for noise reduction
-  sortIntensity: number; // New parameter for sort intensity
-  sliceWidth: number;    // New parameter for width of unsorted vertical slices
-  sortAngle: number;    // New parameter for sort angle (degrees)
+  sortLength: number;    
+  noiseThreshold: number;
+  sliceWidth: number;    
+  sortAngle: number;    
+  chunkSize: number;  // New parameter
 }
 
 const P5Sketch = () => {
@@ -35,13 +35,13 @@ const P5Sketch = () => {
   
   // Sort configuration state
   const [sortMode, setSortMode] = useState<'brightness' | 'hue' | 'saturation' | 'color'>('brightness');
-  const [threshold, setThreshold] = useState<number>(127); // 0-255
+  const [sortStrength, setSortStrength] = useState<number>(50);  // Combined parameter (0-100)
   const [sortDirection, setSortDirection] = useState<'ascending' | 'descending'>('ascending');
-  const [sortLength, setSortLength] = useState<number>(50);    // New state for length
-  const [noiseThreshold, setNoiseThreshold] = useState<number>(10); // New state for noise
-  const [sortIntensity, setSortIntensity] = useState<number>(100);  // New state for intensity
-  const [sliceWidth, setSliceWidth] = useState<number>(0);     // New state for slice width
-  const [sortAngle, setSortAngle] = useState<number>(0);    // New state for sort angle (degrees)
+  const [sortLength, setSortLength] = useState<number>(50);
+  const [noiseThreshold, setNoiseThreshold] = useState<number>(10);
+  const [sliceWidth, setSliceWidth] = useState<number>(0);
+  const [sortAngle, setSortAngle] = useState<number>(0);
+  const [chunkSize, setChunkSize] = useState<number>(50);  // New state
   
   // Throttle progress updates for the progress bar
   const lastProgressUpdateRef = useRef<number>(0);
@@ -71,13 +71,13 @@ const P5Sketch = () => {
     if (p5Instance.current.startPixelSort) {
       p5Instance.current.startPixelSort({
         sortMode,
-        threshold,
+        sortStrength,
         sortDirection,
         sortLength,
         noiseThreshold,
-        sortIntensity,
         sliceWidth,
         sortAngle,
+        chunkSize,  // Add new parameter
       });
     }
   };
@@ -219,11 +219,9 @@ const P5Sketch = () => {
         p.startPixelSort = (options: SortOptions) => {
           if (!p.originalImg) return;
           
-          // Get sort options from parameters
           const { 
-            sortMode, threshold, sortDirection, sortLength, 
-            noiseThreshold, sortIntensity, sliceWidth,
-            sortAngle
+            sortMode, sortStrength, sortDirection, sortLength, 
+            noiseThreshold, sliceWidth, sortAngle, chunkSize
           } = options;
           
           // Create a copy of the original image for sorting
@@ -238,24 +236,20 @@ const P5Sketch = () => {
           sortedImg.loadPixels();
           
           // Process in chunks to keep UI responsive
-          const chunkSize = 10; // Number of lines to process per chunk
           let currentLine = 0;
           
           const processChunk = () => {
-            // For 0°: process columns (vertical). For 90°: process rows (horizontal).
             const isHorizontal = Math.abs(sortAngle % 180) === 90;
             const maxLines = isHorizontal ? sortedImg!.height : sortedImg!.width;
             const endLine = Math.min(currentLine + chunkSize, maxLines);
+            
             for (let line = currentLine; line < endLine; line++) {
-              // Extract the line of pixels
               const linePixels: Array<[number, number, number, number, number, number?]> = [];
               for (let i = 0; i < (isHorizontal ? sortedImg!.width : sortedImg!.height); i++) {
                 let idx;
                 if (isHorizontal) {
-                  // horizontal: x = i, y = line
                   idx = (line * sortedImg!.width + i) * 4;
                 } else {
-                  // vertical: x = line, y = i
                   idx = (i * sortedImg!.width + line) * 4;
                 }
                 linePixels.push([
@@ -273,19 +267,16 @@ const P5Sketch = () => {
                 const g = pixel[1];
                 const b = pixel[2];
                 
-                // Add sort value as the 5th element
                 if (sortMode === 'brightness') {
-                  // Use average of RGB for brightness
                   const brightness = (r + g + b) / 3;
                   pixel.push(brightness);
                 } else if (sortMode === 'hue') {
-                  // Convert RGB to HSL to get hue
                   const max = Math.max(r, g, b);
                   const min = Math.min(r, g, b);
                   let hue = 0;
                   
                   if (max === min) {
-                    hue = 0; // no color, achromatic (gray)
+                    hue = 0;
                   } else {
                     const d = max - min;
                     if (max === r) {
@@ -299,7 +290,6 @@ const P5Sketch = () => {
                   }
                   pixel.push(hue);
                 } else if (sortMode === 'saturation') {
-                  // Convert RGB to HSL to get saturation
                   const max = Math.max(r, g, b);
                   const min = Math.min(r, g, b);
                   const l = (max + min) / 2;
@@ -311,20 +301,14 @@ const P5Sketch = () => {
                   }
                   pixel.push(saturation * 100);
                 } else if (sortMode === 'color') {
-                  // Create a single value that represents the color
-                  // This combines RGB values in a way that preserves color relationships
-                  // Using a weighted sum that gives more importance to the dominant color
                   const max = Math.max(r, g, b);
                   const min = Math.min(r, g, b);
                   const delta = max - min;
                   
-                  // Calculate color value based on dominant color and intensity
                   let colorValue = 0;
                   if (delta === 0) {
-                    // Grayscale
                     colorValue = r;
                   } else {
-                    // Color
                     if (max === r) {
                       colorValue = 256 * 0 + g;
                     } else if (max === g) {
@@ -332,7 +316,6 @@ const P5Sketch = () => {
                     } else {
                       colorValue = 256 * 2 + r;
                     }
-                    // Add intensity component
                     colorValue += delta * 256 * 3;
                   }
                   pixel.push(colorValue);
@@ -349,8 +332,6 @@ const P5Sketch = () => {
                     const prevValue = prevPixel[5] ?? 0;
                     const nextValue = nextPixel[5] ?? 0;
                     
-                    // If the difference between adjacent pixels is less than noise threshold,
-                    // average them out
                     if (Math.abs(currentValue - prevValue) < noiseThreshold &&
                         Math.abs(currentValue - nextValue) < noiseThreshold) {
                       pixel[5] = (prevValue + currentValue + nextValue) / 3;
@@ -359,17 +340,18 @@ const P5Sketch = () => {
                 });
               }
               
-              // Apply threshold filter - only sort pixels above the threshold
-              const thresholdValue = threshold;
+              // Calculate threshold based on sort strength
+              const thresholdValue = (sortStrength / 100) * 255;
+              
+              // Apply threshold filter and sort pixels
               const pixelsAboveThreshold: Array<[number, number, number, number, number, number?]> = [];
               const pixelsBelowThreshold: Array<[number, number, number, number, number, number?]> = [];
               
               linePixels.forEach(pixel => {
-                const value = pixel[5]; // The sort value we just added
+                const value = pixel[5];
                 if ((sortMode === 'brightness' || sortMode === 'color') && value !== undefined && value >= thresholdValue) {
                   pixelsAboveThreshold.push(pixel);
                 } else if ((sortMode === 'hue' || sortMode === 'saturation') && value !== undefined && value >= thresholdValue / 2.55) {
-                  // Normalize threshold from 0-255 to 0-100 for saturation, 0-360 for hue
                   pixelsAboveThreshold.push(pixel);
                 } else {
                   pixelsBelowThreshold.push(pixel);
@@ -378,13 +360,9 @@ const P5Sketch = () => {
               
               // Sort pixels above threshold in sections
               const sortedSections: Array<[number, number, number, number, number, number?]> = [];
-              
-              // Calculate total section width (sort length + slice width)
               const totalSectionWidth = sortLength + sliceWidth;
               
-              // Process each section
               for (let x = 0; x < sortedImg!.width; x += totalSectionWidth) {
-                // Get pixels for this section
                 const sectionStart = x;
                 const sectionEnd = Math.min(x + sortLength, sortedImg!.width);
                 const section = pixelsAboveThreshold.filter(pixel => {
@@ -392,31 +370,19 @@ const P5Sketch = () => {
                   return pixelX >= sectionStart && pixelX < sectionEnd;
                 });
                 
-                // Apply intensity-based sorting to the section
-                if (sortIntensity < 100) {
-                  // Only sort a portion of the pixels based on intensity
-                  const pixelsToSort = Math.floor(section.length * (sortIntensity / 100));
-                  const sortedPart = section.slice(0, pixelsToSort);
-                  const unsortedPart = section.slice(pixelsToSort);
-                  
-                  sortedPart.sort((a, b) => {
-                    const valueA = a[5] ?? 0;
-                    const valueB = b[5] ?? 0;
-                    return sortDirection === 'ascending' ? valueA - valueB : valueB - valueA;
-                  });
-                  
-                  sortedSections.push(...sortedPart, ...unsortedPart);
-                } else {
-                  // Sort all pixels in the section
-                  section.sort((a, b) => {
-                    const valueA = a[5] ?? 0;
-                    const valueB = b[5] ?? 0;
-                    return sortDirection === 'ascending' ? valueA - valueB : valueB - valueA;
-                  });
-                  sortedSections.push(...section);
-                }
+                // Apply sort strength to determine how many pixels to sort
+                const pixelsToSort = Math.floor(section.length * (sortStrength / 100));
+                const sortedPart = section.slice(0, pixelsToSort);
+                const unsortedPart = section.slice(pixelsToSort);
                 
-                // Add unsorted pixels between sections based on sortInterval
+                sortedPart.sort((a, b) => {
+                  const valueA = a[5] ?? 0;
+                  const valueB = b[5] ?? 0;
+                  return sortDirection === 'ascending' ? valueA - valueB : valueB - valueA;
+                });
+                
+                sortedSections.push(...sortedPart, ...unsortedPart);
+                
                 if (x + sortLength < sortedImg!.width) {
                   const unsortedSection = pixelsAboveThreshold.filter(pixel => {
                     const pixelX = (pixel[4] / 4) % sortedImg!.width;
@@ -426,33 +392,26 @@ const P5Sketch = () => {
                 }
               }
               
-              // Combine sorted sections with unsorted pixels below threshold
               const sortedRow = [...pixelsBelowThreshold, ...sortedSections];
               
-              // Put pixels back in original order
               for (let i = 0; i < linePixels.length; i++) {
                 const pixel = sortedRow[i];
                 if (pixel) {
                   let idx;
                   if (isHorizontal) {
-                    // horizontal: x = i, y = line
                     idx = (line * sortedImg!.width + i) * 4;
                   } else {
-                    // vertical: x = line, y = i
                     idx = (i * sortedImg!.width + line) * 4;
                   }
-                  sortedImg!.pixels[idx] = pixel[0];      // R
-                  sortedImg!.pixels[idx + 1] = pixel[1];  // G
-                  sortedImg!.pixels[idx + 2] = pixel[2];  // B
-                  sortedImg!.pixels[idx + 3] = pixel[3];  // A
+                  sortedImg!.pixels[idx] = pixel[0];
+                  sortedImg!.pixels[idx + 1] = pixel[1];
+                  sortedImg!.pixels[idx + 2] = pixel[2];
+                  sortedImg!.pixels[idx + 3] = pixel[3];
                 }
               }
             }
             
-            // Update current line position
             currentLine = endLine;
-            
-            // Calculate and update progress
             const progress = (currentLine / maxLines) * 100;
             const now = Date.now();
             if (now - lastProgressUpdateRef.current > 50 || progress === 100) {
@@ -460,23 +419,18 @@ const P5Sketch = () => {
               lastProgressUpdateRef.current = now;
             }
             
-            // Show progress by updating the pixels after each chunk
             sortedImg!.updatePixels();
             p.sortedImg = sortedImg;
             
-            // Continue processing if not done
             if (currentLine < maxLines) {
-              // Schedule next chunk with a small delay to allow UI updates
               setTimeout(processChunk, 0);
             } else {
-              // All done
               setHasSortedImage(true);
               setIsSorting(false);
               setSortProgress(100);
             }
           };
           
-          // Start processing the first chunk
           processChunk();
         };
         
@@ -611,7 +565,7 @@ const P5Sketch = () => {
         <div className="w-full max-w-4xl mb-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 p-6 bg-gray-100 rounded-lg">
           {/* Sort Mode */}
           <div className="flex flex-col space-y-3">
-            <label className="text-base font-medium text-gray-800">Sort By:</label>
+            <label className="text-base font-medium text-gray-800" title="Choose how pixels are sorted: by brightness (light/dark), color (RGB values), hue (color wheel position), or saturation (color intensity)">Sort By:</label>
             <div className="grid grid-cols-2 gap-3">
               <label className="flex items-center space-x-2 text-gray-800">
                 <input
@@ -660,20 +614,20 @@ const P5Sketch = () => {
             </div>
           </div>
           
-          {/* Threshold */}
+          {/* Sort Strength (Combined Threshold and Intensity) */}
           <div className="flex flex-col space-y-3">
-            <label className="text-base font-medium text-gray-800">Threshold:</label>
+            <label className="text-base font-medium text-gray-800" title="Controls both which pixels are sorted and how many pixels in each section are sorted - higher values create more dramatic effects">Sort Strength:</label>
             <div className="space-y-2">
               <div className="flex justify-between text-sm text-gray-600">
-                <span>chill</span>
-                <span>cooked</span>
+                <span>subtle</span>
+                <span>intense</span>
               </div>
               <input
                 type="range"
                 min="0"
-                max="255"
-                value={255 - threshold}
-                onChange={(e) => setThreshold(255 - parseInt(e.target.value))}
+                max="100"
+                value={sortStrength}
+                onChange={(e) => setSortStrength(parseInt(e.target.value))}
                 className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
               />
             </div>
@@ -681,7 +635,7 @@ const P5Sketch = () => {
           
           {/* Sort Direction */}
           <div className="flex flex-col space-y-3">
-            <label className="text-base font-medium text-gray-800">Direction:</label>
+            <label className="text-base font-medium text-gray-800" title="Choose whether pixels are sorted from low to high (ascending) or high to low (descending) values">Direction:</label>
             <div className="flex space-x-6">
               <label className="flex items-center space-x-2 text-gray-800">
                 <input
@@ -710,7 +664,7 @@ const P5Sketch = () => {
 
           {/* Sort Length */}
           <div className="flex flex-col space-y-3">
-            <label className="text-base font-medium text-gray-800">Sort Length:</label>
+            <label className="text-base font-medium text-gray-800" title="Controls how many pixels are sorted in each section - longer sections create more dramatic effects">Sort Length:</label>
             <div className="space-y-2">
               <div className="flex justify-between text-sm text-gray-600">
                 <span>short</span>
@@ -729,7 +683,7 @@ const P5Sketch = () => {
 
           {/* Noise Threshold */}
           <div className="flex flex-col space-y-3">
-            <label className="text-base font-medium text-gray-800">Noise Reduction:</label>
+            <label className="text-base font-medium text-gray-800" title="Reduces visual noise by averaging similar pixels - higher values create smoother results">Noise Reduction:</label>
             <div className="space-y-2">
               <div className="flex justify-between text-sm text-gray-600">
                 <span>none</span>
@@ -746,28 +700,9 @@ const P5Sketch = () => {
             </div>
           </div>
 
-          {/* Sort Intensity */}
-          <div className="flex flex-col space-y-3">
-            <label className="text-base font-medium text-gray-800">Sort Intensity:</label>
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm text-gray-600">
-                <span>subtle</span>
-                <span>intense</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={sortIntensity}
-                onChange={(e) => setSortIntensity(parseInt(e.target.value))}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-              />
-            </div>
-          </div>
-
           {/* Slice Width */}
           <div className="flex flex-col space-y-3">
-            <label className="text-base font-medium text-gray-800">Vertical Slices:</label>
+            <label className="text-base font-medium text-gray-800" title="Adds unsorted vertical slices between sorted sections - creates a striped effect">Vertical Slices:</label>
             <div className="space-y-2">
               <div className="flex justify-between text-sm text-gray-600">
                 <span>none</span>
@@ -786,7 +721,7 @@ const P5Sketch = () => {
 
           {/* Sort Angle */}
           <div className="flex flex-col space-y-3">
-            <label className="text-base font-medium text-gray-800">Sort Angle:</label>
+            <label className="text-base font-medium text-gray-800" title="Changes the direction of sorting - 0° sorts vertically, 90° sorts horizontally, 180° sorts vertically in reverse">Sort Angle:</label>
             <div className="space-y-2">
               <div className="flex justify-between text-sm text-gray-600">
                 <span>0°</span>
@@ -805,10 +740,29 @@ const P5Sketch = () => {
               <div className="text-center text-xs text-gray-500">{sortAngle}°</div>
             </div>
           </div>
+
+          {/* Chunk Size */}
+          <div className="flex flex-col space-y-3">
+            <label className="text-base font-medium text-gray-800" title="Controls how many lines are processed at once - higher values create smoother results but may be slower">Chunk Size:</label>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>fast</span>
+                <span>smooth</span>
+              </div>
+              <input
+                type="range"
+                min="10"
+                max="200"
+                value={chunkSize}
+                onChange={(e) => setChunkSize(parseInt(e.target.value))}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+              />
+            </div>
+          </div>
         </div>
       )}
       
-      <div ref={sketchRef}></div>
+      <div ref={sketchRef} className="rounded-xl overflow-hidden shadow-lg"></div>
       
       {/* Progress bar */}
       {isSorting && (
