@@ -31,7 +31,6 @@ const P5Sketch = () => {
   const p5Instance = useRef<ExtendedP5 | null>(null);
   const [isSorting, setIsSorting] = useState(false);
   const [hasSortedImage, setHasSortedImage] = useState(false);
-  const [isPixelSorted, setIsPixelSorted] = useState(false);
   const [sortProgress, setSortProgress] = useState(0);
   
   // Sort configuration state
@@ -58,7 +57,6 @@ const P5Sketch = () => {
     
     setIsSorting(true);
     setHasSortedImage(false);
-    setIsPixelSorted(false);
     setSortProgress(0);
     
     // Reset the sorted image
@@ -138,8 +136,6 @@ const P5Sketch = () => {
       
       // Define the sketch
       const sketch = (p: ExtendedP5) => {
-        let isPixelSorted = false;
-        
         p.setup = () => {
           // Create wider canvas to accommodate both images side by side
           p.createCanvas(1200, 500);
@@ -228,7 +224,7 @@ const P5Sketch = () => {
           } = options;
           
           // Create a copy of the original image for sorting
-          let sortedImg = p.createImage(p.originalImg.width, p.originalImg.height);
+          const sortedImg = p.createImage(p.originalImg.width, p.originalImg.height);
           sortedImg.copy(
             p.originalImg, 
             0, 0, p.originalImg.width, p.originalImg.height, 
@@ -467,8 +463,6 @@ const P5Sketch = () => {
               setTimeout(processChunk, 0);
             } else {
               // All done
-              p.isPixelSorted = true;
-              setIsPixelSorted(true);
               setHasSortedImage(true);
               setIsSorting(false);
               setSortProgress(100);
